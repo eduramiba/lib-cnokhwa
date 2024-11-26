@@ -1,0 +1,23 @@
+[package]
+name = "cnokhwa"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies.nokhwa]
+version = "0.10.5"
+features = ["input-native", "output-threaded"]
+
+[dependencies]
+dcv-color-primitives = "0.6.1"
+parking_lot = "0.12.3"
+
+[profile.release.package."*"]
+opt-level = 3
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
