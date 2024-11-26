@@ -170,7 +170,7 @@ pub extern "C" fn cnokhwa_has_videocapture_auth() -> i32 {
 
 #[no_mangle]
 pub extern "C" fn cnokhwa_devices_count() -> i32 {
-    let Some(state) = State::current() else { return -1 };
+    let Some(state) = State::current() else { return ERROR_STATE_NOT_INITIALIZED };
 
     state.devices.len() as i32
 }
@@ -222,10 +222,10 @@ pub extern "C" fn cnokhwa_device_model_id(device_index: i32, buf: *mut c_char, b
 
 #[no_mangle]
 pub extern "C" fn cnokhwa_device_formats_count(device_index: i32) -> i32 {
-    let Some(state) = State::current() else { return -1 };
+    let Some(state) = State::current() else { return ERROR_STATE_NOT_INITIALIZED };
 
     if device_index < 0 || (device_index as usize) >= state.devices.len() {
-        return -1;
+        return ERROR_DEVICE_NOT_FOUND;
     }
 
     let device = &state.devices[device_index as usize];
