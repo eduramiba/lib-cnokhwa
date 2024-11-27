@@ -69,8 +69,9 @@ fn list_devices() -> Result<Vec<VideoDevice>, &'static str> {
             Err(_) => continue
         };
 
-        for format in camera_formats {
+        for (index, format) in camera_formats.iter().enumerate() {
             let vf = VideoFormat {
+                index,
                 width: format.resolution().width(),
                 height: format.resolution().height(),
                 format: format.format(),
@@ -353,9 +354,36 @@ pub extern "C" fn cnokhwa_start_capture(device_index: u32, width: u32, height: u
         })
     else { return ERROR_FORMAT_NOT_FOUND };
 
+    start_capture_with_format_internal(state, device_index, format.index as u32)
+}
+
+#[no_mangle]
+pub extern "C" fn cnokhwa_start_capture_with_format(device_index: u32, format_index: u32) -> i32 {
+    let mut state_guard = STATE.lock();
+    let state = match state_guard.as_mut() {
+        Some(s) => s,
+        None => return ERROR_STATE_NOT_INITIALIZED
+    };
+
+    start_capture_with_format_internal(state, device_index, format_index)
+}
+
+fn start_capture_with_format_internal(state: &mut State, device_index: u32, format_index: u32) -> i32 {
+    let device = match state.devices.get(device_index as usize) {
+        Some(dev) => dev,
+        None => return ERROR_DEVICE_NOT_FOUND
+    };
+
+    if state.camera_sessions.get(&device.index).is_some() {
+        return ERROR_SESSION_ALREADY_STARTED;
+    }
+
+    let Some(format) = device.formats.get(format_index as usize)
+    else { return ERROR_FORMAT_NOT_FOUND };
+
     println!("Starting capture on device {} ({}) with format {}", device.index, device.name, format.format);
 
-    let resolution = Resolution::new(width, height);
+    let resolution = Resolution::new(format.width, format.height);
     let camera_format = CameraFormat::new(resolution, format.format, format.frame_rate);
 
     let format = RequestedFormat::new::<RgbFormat>(RequestedFormatType::Exact(camera_format));
@@ -370,6 +398,7 @@ pub extern "C" fn cnokhwa_start_capture(device_index: u32, width: u32, height: u
     let session = Session {
         camera: Arc::new(Mutex::new(camera_session))
     };
+
     state.camera_sessions.insert(device.index.clone(), session);
 
     RESULT_OK
