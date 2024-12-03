@@ -7,7 +7,7 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies.nokhwa]
-version = "0.10.5"
+version = "0.10.6"
 features = ["input-native", "output-threaded"]
 
 [dependencies]
