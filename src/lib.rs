@@ -56,17 +56,25 @@ fn list_devices() -> Result<Vec<VideoDevice>, &'static str> {
     for device in devices {
         let mut unique_formats: HashSet<VideoFormat> = HashSet::new();
 
-        let index = device.index().clone();
+        let index = device.index();
         let requested_format = RequestedFormat::new::<RgbFormat>(RequestedFormatType::None);
 
-        let mut camera = match Camera::with_backend(index, requested_format, backend.clone()) {
+        let mut camera = match Camera::with_backend(index.clone(), requested_format, backend.clone()) {
             Ok(cam) => cam,
-            Err(_) => continue
+            Err(err) => {
+                eprintln!("Error creating camera for device index {}", index);
+                eprintln!("{:?}", err);
+                continue;
+            }
         };
 
         let camera_formats = match camera.compatible_camera_formats() {
             Ok(f) => f,
-            Err(_) => continue
+            Err(err) => {
+                eprintln!("Error listing compatible formats for device index {}", index);
+                eprintln!("{:?}", err);
+                continue;
+            }
         };
 
         for (index, format) in camera_formats.iter().enumerate() {
@@ -142,15 +150,15 @@ pub extern "C" fn cnokhwa_initialize() -> i32 {
 
                 match result {
                     Ok(()) => RESULT_OK,
-                    Err(_) => {
-                        eprintln!("Error setting up new state");
+                    Err(err) => {
+                        eprintln!("Error setting up new state, {:?}", err);
                         ERROR_UNKNOWN
                     }
                 }
             }
         },
-        Err(e) => {
-            eprintln!("Error listing devices: {:?}", e);
+        Err(err) => {
+            eprintln!("Error listing devices: {:?}", err);
             ERROR_UNKNOWN
         }
     }
