@@ -338,7 +338,7 @@ pub extern "C" fn cnokhwa_start_capture(device_index: u32, width: u32, height: u
 
     fn format_priority(format: FrameFormat) -> u8 {
         match format {
-            FrameFormat::RAWRGB => 4,
+            FrameFormat::RAWRGB | FrameFormat::RAWBGR => 4,
             FrameFormat::NV12 => 3,
             FrameFormat::YUYV => 2,
             FrameFormat::MJPEG => 1,

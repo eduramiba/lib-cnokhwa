@@ -1,6 +1,6 @@
 [package]
 name = "cnokhwa"
-version = "0.1.0"
+version = "0.1.2"
 edition = "2021"
 
 [lib]
@@ -9,6 +9,8 @@ crate-type = ["cdylib"]
 [dependencies.nokhwa]
 version = "0.10.7"
 features = ["input-native", "output-threaded"]
+git = "https://github.com/eduramiba/nokhwa"
+branch = "0.10"
 
 [dependencies]
 dcv-color-primitives = "0.7.0"
