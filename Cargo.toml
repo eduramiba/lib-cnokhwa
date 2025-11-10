@@ -7,14 +7,12 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies.nokhwa]
-version = "0.10.7"
+version = "0.10.10"
 features = ["input-native", "output-threaded"]
-git = "https://github.com/eduramiba/nokhwa"
-branch = "0.10"
 
 [dependencies]
 dcv-color-primitives = "0.7.0"
-parking_lot = "0.12.3"
+parking_lot = "0.12.5"
 
 [profile.release.package."*"]
 opt-level = 3
