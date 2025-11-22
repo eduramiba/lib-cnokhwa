@@ -3,16 +3,17 @@ import time
 import numpy as np
 import cv2
 import time
-
 from sys import platform
-if platform == "linux" or platform == "linux2":
-    libname = 'libcnokhwa.so'
-elif platform == "darwin":
-    libname = 'libcnokhwa.dylib'
-elif platform == "win32":
-    libname = 'cnokhwa.dll'
 
-lib = ctypes.CDLL('target/release/' + libname)
+# assuming we are on x64 Python:
+if platform == "linux" or platform == "linux2":
+    libpath = 'target/release/libcnokhwa.so'
+elif platform == "darwin":
+    libpath = 'target/release/libcnokhwa.dylib'
+elif platform == "win32":
+    libpath = 'target/x86_64-win7-windows-msvc/release/cnokhwa.dll'
+
+lib = ctypes.CDLL(libpath)
 
 lib.cnokhwa_initialize.argtypes = []
 lib.cnokhwa_initialize.restype = ctypes.c_int32
