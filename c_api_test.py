@@ -11,7 +11,7 @@ if platform == "linux" or platform == "linux2":
 elif platform == "darwin":
     libpath = 'target/release/libcnokhwa.dylib'
 elif platform == "win32":
-    libpath = 'target/x86_64-win7-windows-msvc/release/cnokhwa.dll'
+    libpath = 'target/release/cnokhwa.dll'
 
 lib = ctypes.CDLL(libpath)
 
