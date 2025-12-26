@@ -11,7 +11,7 @@ version = "0.10.10"
 features = ["input-native", "output-threaded"]
 
 [dependencies]
-dcv-color-primitives = "0.7.0"
+dcv-color-primitives = "0.7.1"
 parking_lot = "0.12.5"
 
 [profile.release.package."*"]
