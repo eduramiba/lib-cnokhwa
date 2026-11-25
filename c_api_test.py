@@ -47,6 +47,12 @@ lib.cnokhwa_device_format_frame_rate.restype = ctypes.c_int32
 lib.cnokhwa_device_format_type.argtypes = [ctypes.c_int32, ctypes.c_int32, ctypes.POINTER(ctypes.c_char), ctypes.c_size_t]
 lib.cnokhwa_device_format_type.restype = ctypes.c_size_t
 
+lib.cnokhwa_active_format.argtypes = [
+    ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32),
+    ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_char), ctypes.c_size_t,
+]
+lib.cnokhwa_active_format.restype = ctypes.c_int32
+
 lib.cnokhwa_has_first_frame.argtypes = [ctypes.c_int32]
 lib.cnokhwa_has_first_frame.restype = ctypes.c_int32
 
@@ -151,7 +157,17 @@ try:
     bytes_per_row = lib.cnokhwa_frame_bytes_per_row(device_index)
     buffer_size = frame_width * frame_height * 3  # RGB format
 
-    print(frame_width, frame_height, bytes_per_row)
+    active_width = ctypes.c_uint32()
+    active_height = ctypes.c_uint32()
+    active_fps = ctypes.c_double()
+    pixel_format = ctypes.create_string_buffer(32)
+    assert lib.cnokhwa_active_format(
+        device_index, ctypes.byref(active_width), ctypes.byref(active_height),
+        ctypes.byref(active_fps), pixel_format, len(pixel_format),
+    ) == OK
+    assert (active_width.value, active_height.value) == (frame_width, frame_height)
+    assert pixel_format.value and active_fps.value >= 0
+    print(frame_width, frame_height, bytes_per_row, pixel_format.value.decode(), active_fps.value)
 
     # Allocate buffer
     buffer = (ctypes.c_uint8 * buffer_size)()

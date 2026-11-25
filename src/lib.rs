@@ -1,3 +1,4 @@
+mod capture_backend;
 mod video_format;
 mod video_device;
 
@@ -8,7 +9,7 @@ use nokhwa::pixel_format::RgbFormat;
 use nokhwa::{native_api_backend, nokhwa_check, nokhwa_initialize, query, utils::{
     CameraFormat, CameraIndex,
     RequestedFormat, RequestedFormatType, Resolution,
-}, Buffer, CallbackCamera, Camera};
+}, Buffer, CallbackCamera};
 use std::collections::{HashMap, HashSet};
 
 use std::os::raw::c_char;
@@ -18,7 +19,7 @@ use crate::video_device::VideoDevice;
 use crate::video_format::VideoFormat;
 use nokhwa::utils::FrameFormat;
 use parking_lot::Mutex;
-use std::sync::{Arc, LazyLock, MutexGuard, PoisonError};
+use std::sync::{Arc, LazyLock};
 
 // This small library exposes nokhwa as a simple C library.
 // Disclaimer: It's literally my first Rust program, so probably it will contain some bad parts!
@@ -54,43 +55,28 @@ fn list_devices() -> Result<Vec<VideoDevice>, &'static str> {
 
     let mut result: Vec<VideoDevice> = vec![];
     for device in devices {
-        let mut unique_formats: HashSet<VideoFormat> = HashSet::new();
-
         let index = device.index();
-        let requested_format = RequestedFormat::new::<RgbFormat>(RequestedFormatType::None);
-
-        let mut camera = match Camera::with_backend(index.clone(), requested_format, backend.clone()) {
-            Ok(cam) => cam,
+        let camera_formats = match capture_backend::supported_formats(index) {
+            Ok(formats) if formats.is_empty() => continue,
+            Ok(formats) => formats,
             Err(err) => {
-                eprintln!("Error creating camera for device index {}", index);
-                eprintln!("{:?}", err);
+                eprintln!("Error listing compatible formats for device index {index}: {err}");
                 continue;
             }
         };
-
-        let camera_formats = match camera.compatible_camera_formats() {
-            Ok(f) => f,
-            Err(err) => {
-                eprintln!("Error listing compatible formats for device index {}", index);
-                eprintln!("{:?}", err);
-                continue;
-            }
-        };
-
-        for (index, format) in camera_formats.iter().enumerate() {
-            let vf = VideoFormat {
+        let mut seen = HashSet::new();
+        let formats = camera_formats
+            .into_iter()
+            .filter(|format| seen.insert(*format))
+            .enumerate()
+            .map(|(index, format)| VideoFormat {
                 index,
-                width: format.resolution().width(),
-                height: format.resolution().height(),
+                width: format.width(),
+                height: format.height(),
                 format: format.format(),
-                frame_rate: format.frame_rate()
-            };
-
-            unique_formats.insert(vf);
-        }
-
-        let mut formats: Vec<VideoFormat> = unique_formats.iter().cloned().collect();
-        formats.sort();
+                frame_rate: format.frame_rate(),
+            })
+            .collect();
 
         let model_id = device.description().to_string();
         let unique_id = if device.misc().is_empty() { device.description().to_string() } else { device.misc().to_string() };
@@ -110,7 +96,8 @@ fn list_devices() -> Result<Vec<VideoDevice>, &'static str> {
 
 #[derive(Clone)]
 struct Session {
-    pub camera: Arc<Mutex<CallbackCamera>>
+    pub camera: Arc<Mutex<CallbackCamera>>,
+    frame_rate: f64,
 }
 
 #[derive(Clone)]
@@ -125,12 +112,6 @@ impl State {
 
         read_guard.clone()
     }
-    pub fn make_current(self) -> Result<(), PoisonError<MutexGuard<'static, Option<State>>>> {
-        let mut w = STATE.lock();
-        *w = Some(self);
-
-        Ok(())
-    }
 }
 
 static STATE: LazyLock<Mutex<Option<State>>> = LazyLock::new(Default::default);
@@ -139,24 +120,14 @@ static STATE: LazyLock<Mutex<Option<State>>> = LazyLock::new(Default::default);
 pub extern "C" fn cnokhwa_initialize() -> i32 {
     match list_devices() {
         Ok(devices) => {
-            {
-                let current_state = State::current();
-                let sessions = current_state.map(|state| { state.camera_sessions});
-
-                let camera_sessions = sessions.unwrap_or(HashMap::new());
-
-                let new_state = State { devices, camera_sessions };
-                let result = new_state.make_current();
-
-                match result {
-                    Ok(()) => RESULT_OK,
-                    Err(err) => {
-                        eprintln!("Error setting up new state, {:?}", err);
-                        ERROR_UNKNOWN
-                    }
-                }
-            }
-        },
+            let mut guard = STATE.lock();
+            let state = guard.get_or_insert_with(|| State {
+                devices: Vec::new(),
+                camera_sessions: HashMap::new(),
+            });
+            state.devices = devices;
+            RESULT_OK
+        }
         Err(err) => {
             eprintln!("Error listing devices: {:?}", err);
             ERROR_UNKNOWN
@@ -396,19 +367,68 @@ fn start_capture_with_format_internal(state: &mut State, device_index: u32, form
 
     let format = RequestedFormat::new::<RgbFormat>(RequestedFormatType::Exact(camera_format));
 
-    let Ok(mut camera_session) = CallbackCamera::new(device.index.clone(), format, |_buffer| {
-        //NOOP
-    }) else { return ERROR_OPENING_DEVICE };
-
-    let Ok(_) =  camera_session.open_stream() else { return ERROR_OPENING_DEVICE };
-
-    // save camera session in state:
+    let mut camera_session = match CallbackCamera::new(device.index.clone(), format, |_| {}) {
+        Ok(camera) => camera,
+        Err(error) => {
+            eprintln!("Cannot configure device {} at {}: {}", device.index, camera_format, error);
+            return ERROR_OPENING_DEVICE;
+        }
+    };
+    let frame_rate = match capture_backend::active_frame_rate(&device.index) {
+        Ok(rate) => rate,
+        Err(error) => {
+            eprintln!("Cannot read negotiated frame rate for device {}: {}", device.index, error);
+            return ERROR_OPENING_DEVICE;
+        }
+    };
+    if let Err(error) = camera_session.open_stream() {
+        eprintln!("Cannot start stream on device {}: {}", device.index, error);
+        return ERROR_OPENING_DEVICE;
+    }
     let session = Session {
-        camera: Arc::new(Mutex::new(camera_session))
+        camera: Arc::new(Mutex::new(camera_session)),
+        frame_rate,
     };
 
     state.camera_sessions.insert(device.index.clone(), session);
 
+    RESULT_OK
+}
+
+fn session_format(device_index: u32) -> Result<(CameraFormat, f64), i32> {
+    let guard = STATE.lock();
+    let state = guard.as_ref().ok_or(ERROR_STATE_NOT_INITIALIZED)?;
+    let device = state.devices.get(device_index as usize).ok_or(ERROR_DEVICE_NOT_FOUND)?;
+    let session = state.camera_sessions.get(&device.index).ok_or(ERROR_SESSION_NOT_STARTED)?;
+    let mode = session.camera.lock().camera_format().map_err(|_| ERROR_READING_CAMERA_SESSION)?;
+    Ok((mode, session.frame_rate))
+}
+
+/// Returns the active stream's width, height, source pixel format and frame rate.
+/// The rate is in frames per second, or 0 if the native backend cannot report it.
+/// RGB output stride is available through cnokhwa_frame_bytes_per_row.
+///
+/// # Safety
+/// The caller must supply writable, aligned output pointers and at least
+/// `capacity` writable bytes for the NUL-terminated pixel format.
+#[no_mangle]
+pub unsafe extern "C" fn cnokhwa_active_format(
+    device_index: u32, width: *mut u32, height: *mut u32, fps: *mut f64,
+    pixel_format: *mut c_char, capacity: usize,
+) -> i32 {
+    if width.is_null() || height.is_null() || fps.is_null() || pixel_format.is_null() {
+        return ERROR_BUFFER_NULL;
+    }
+    let (mode, rate) = match session_format(device_index) {
+        Ok(format) => format,
+        Err(error) => return error,
+    };
+    let name = mode.format().to_string();
+    if capacity <= name.len() { return ERROR_BUFFER_NOT_ENOUGH_CAPACITY; }
+    *width = mode.width();
+    *height = mode.height();
+    *fps = rate;
+    copy_str(&name, pixel_format, capacity);
     RESULT_OK
 }
 
@@ -519,74 +539,25 @@ pub extern "C" fn cnokhwa_grab_frame(
 
 #[no_mangle]
 pub extern "C" fn cnokhwa_frame_width(device_index: u32) -> i32 {
-    let mut state_guard = STATE.lock();
-    let state = match state_guard.as_mut() {
-        Some(s) => s,
-        None => return ERROR_STATE_NOT_INITIALIZED
-    };
-
-    let device = match state.devices.get(device_index as usize) {
-        Some(dev) => dev,
-        None => return ERROR_DEVICE_NOT_FOUND
-    };
-
-    let Some(session) = state.camera_sessions.get(&device.index)
-    else { return ERROR_SESSION_NOT_STARTED };
-
-    let camera_session_guard = session.camera.lock();
-
-    match camera_session_guard.camera_format() {
-        Ok(f) => f.width() as i32,
-        Err(_) => ERROR_READING_CAMERA_SESSION
+    match session_format(device_index) {
+        Ok((mode, _)) => i32::try_from(mode.width()).unwrap_or(ERROR_READING_CAMERA_SESSION),
+        Err(error) => error,
     }
 }
 
 #[no_mangle]
 pub extern "C" fn cnokhwa_frame_height(device_index: u32) -> i32 {
-    let mut state_guard = STATE.lock();
-    let state = match state_guard.as_mut() {
-        Some(s) => s,
-        None => return ERROR_STATE_NOT_INITIALIZED
-    };
-
-    let device = match state.devices.get(device_index as usize) {
-        Some(dev) => dev,
-        None => return ERROR_DEVICE_NOT_FOUND
-    };
-
-    let Some(session) = state.camera_sessions.get(&device.index)
-    else { return ERROR_SESSION_NOT_STARTED };
-
-    let camera_session_guard = session.camera.lock();
-
-    match camera_session_guard.camera_format() {
-        Ok(f) => f.height() as i32,
-        Err(_) => ERROR_READING_CAMERA_SESSION
+    match session_format(device_index) {
+        Ok((mode, _)) => i32::try_from(mode.height()).unwrap_or(ERROR_READING_CAMERA_SESSION),
+        Err(error) => error,
     }
 }
 
 #[no_mangle]
 pub extern "C" fn cnokhwa_frame_bytes_per_row(device_index: u32) -> i32 {
-    let mut state_guard = STATE.lock();
-    let state = match state_guard.as_mut() {
-        Some(s) => s,
-        None => return ERROR_STATE_NOT_INITIALIZED
-    };
-
-    let device = match state.devices.get(device_index as usize) {
-        Some(dev) => dev,
-        None => return ERROR_DEVICE_NOT_FOUND
-    };
-
-    let Some(session) = state.camera_sessions.get(&device.index)
-    else { return ERROR_SESSION_NOT_STARTED };
-
-    let camera_session_guard = session.camera.lock();
-
-    match camera_session_guard.camera_format() {
-        Ok(f) => (f.width() as i32) * 3, // RGB
-        Err(_) => ERROR_READING_CAMERA_SESSION,
-    }
+    let width = cnokhwa_frame_width(device_index);
+    if width < 0 { return width; }
+    width.checked_mul(3).unwrap_or(ERROR_READING_CAMERA_SESSION)
 }
 
 /// Copies a Rust string into a C buffer, similar to `strncpy` in C.

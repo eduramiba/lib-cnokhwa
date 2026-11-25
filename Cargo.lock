@@ -139,6 +139,8 @@ dependencies = [
  "dcv-color-primitives",
  "nokhwa",
  "nokhwa-bindings-linux",
+ "nokhwa-bindings-macos",
+ "nokhwa-bindings-windows",
  "parking_lot 0.13.0",
 ]
 
